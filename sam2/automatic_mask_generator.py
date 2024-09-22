@@ -267,12 +267,15 @@ class SAM2AutomaticMaskGenerator:
 
         # Generate masks for this crop in batches
         data = MaskData()
+        i = 0
         for (points,) in batch_iterator(self.points_per_batch, points_for_image):
-            batch_data = self._process_batch(
-                points, cropped_im_size, crop_box, orig_size, normalize=True
-            )
-            data.cat(batch_data)
-            del batch_data
+            with torch.autograd.profiler.record_function("point_{i}"):
+                batch_data = self._process_batch(
+                    points, cropped_im_size, crop_box, orig_size, normalize=True
+                )
+                data.cat(batch_data)
+                del batch_data
+            i += 1
         self.predictor.reset_predictor()
 
         # Remove duplicates within this crop.
