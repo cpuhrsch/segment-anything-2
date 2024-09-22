@@ -382,7 +382,8 @@ class SAM2AutomaticMaskGenerator:
 
         # Compress to RLE
         data["masks"] = uncrop_masks(data["masks"], crop_box, orig_h, orig_w)
-        data["rles"] = mask_to_rle_pytorch(data["masks"])
+        with torch.autograd.profiler.record_function(f"mask_to_rle_pytorch"):
+            data["rles"] = mask_to_rle_pytorch(data["masks"])
         del data["masks"]
 
         return data
