@@ -42,6 +42,9 @@ def _apply_eval_dtype_sam(model, dtype):
 
     return model
 
+# TODO: Might need to disable weight cache
+torch.autocast("cuda", dtype=torch.bfloat16).__enter__()
+
 image = cv2.imread('dog.jpg')
 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
