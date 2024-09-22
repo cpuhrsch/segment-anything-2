@@ -269,7 +269,7 @@ class SAM2AutomaticMaskGenerator:
         data = MaskData()
         i = 0
         for (points,) in batch_iterator(self.points_per_batch, points_for_image):
-            with torch.autograd.profiler.record_function("point_{i}"):
+            with torch.autograd.profiler.record_function(f"point_{i}"):
                 batch_data = self._process_batch(
                     points, cropped_im_size, crop_box, orig_size, normalize=True
                 )
@@ -314,12 +314,13 @@ class SAM2AutomaticMaskGenerator:
         in_labels = torch.ones(
             in_points.shape[0], dtype=torch.int, device=in_points.device
         )
-        masks, iou_preds, low_res_masks = self.predictor._predict(
-            in_points[:, None, :],
-            in_labels[:, None],
-            multimask_output=self.multimask_output,
-            return_logits=True,
-        )
+        with torch.autograd.profiler.record_function(f"predict"):
+            masks, iou_preds, low_res_masks = self.predictor._predict(
+                in_points[:, None, :],
+                in_labels[:, None],
+                multimask_output=self.multimask_output,
+                return_logits=True,
+            )
 
         # Serialize predictions and store in MaskData
         data = MaskData(
