@@ -403,6 +403,7 @@ class SAM2ImagePredictor:
             else:
                 concat_points = (box_coords, box_labels)
 
+        concat_points = (concat_points[0].clone(), concat_points[1].clone())
         sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(
             points=concat_points,
             boxes=None,
@@ -418,10 +419,10 @@ class SAM2ImagePredictor:
             for feat_level in self._features["high_res_feats"]
         ]
         low_res_masks, iou_predictions, _, _ = self.model.sam_mask_decoder(
-            image_embeddings=self._features["image_embed"][img_idx].unsqueeze(0),
-            image_pe=self.model.sam_prompt_encoder.get_dense_pe(),
-            sparse_prompt_embeddings=sparse_embeddings,
-            dense_prompt_embeddings=dense_embeddings,
+            image_embeddings=self._features["image_embed"][img_idx].unsqueeze(0).clone(),
+            image_pe=self.model.sam_prompt_encoder.get_dense_pe().clone(),
+            sparse_prompt_embeddings=sparse_embeddings.clone(),
+            dense_prompt_embeddings=dense_embeddings.clone(),
             multimask_output=multimask_output,
             repeat_image=batched_mode,
             high_res_features=high_res_features,

@@ -65,9 +65,11 @@ sam2_checkpoint = "checkpoints/sam2_hiera_large.pt"
 model_cfg = "sam2_hiera_l.yaml"
 
 sam2 = build_sam2(model_cfg, sam2_checkpoint, device=device, apply_postprocessing=False)
-sam2 = _apply_eval_dtype_sam(sam2, torch.float32)
+sam2 = _apply_eval_dtype_sam(sam2, torch.bfloat16)
 sam2.to(device=device)
 
+sam2.sam_prompt_encoder = torch.compile(sam2.sam_prompt_encoder, mode='max-autotune', fullgraph=True, dynamic=False)
+sam2.sam_mask_decoder.predict_masks = torch.compile(sam2.sam_mask_decoder.predict_masks, mode='max-autotune', fullgraph=True, dynamic=False)
 mask_generator = SAM2AutomaticMaskGenerator(sam2)
 
 # Important to enable CUDA graphs
