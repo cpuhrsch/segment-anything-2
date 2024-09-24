@@ -438,6 +438,87 @@ class SAM2ImagePredictor:
 
         return masks, iou_predictions, low_res_masks
 
+    @torch.no_grad()
+    def _predict_batched(
+        self,
+        point_coordss: Optional[torch.Tensor],
+        point_labelss: Optional[torch.Tensor],
+        boxes: Optional[torch.Tensor] = None,
+        mask_input: Optional[torch.Tensor] = None,
+        multimask_output: bool = True,
+        return_logits: bool = False,
+        img_idx: int = -1,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+        maskss = []
+        iou_predictionss = []
+        low_res_maskss = []
+        for point_coords, point_labels in zip(point_coordss.unbind(), point_labelss.unbind()):
+
+            if not self._is_image_set:
+                raise RuntimeError(
+                    "An image must be set with .set_image(...) before mask prediction."
+                )
+
+            if point_coords is not None:
+                concat_points = (point_coords, point_labels)
+            else:
+                concat_points = None
+
+            # Embed prompts
+            if boxes is not None:
+                box_coords = boxes.reshape(-1, 2, 2)
+                box_labels = torch.tensor([[2, 3]], dtype=torch.int, device=boxes.device)
+                box_labels = box_labels.repeat(boxes.size(0), 1)
+                # we merge "boxes" and "points" into a single "concat_points" input (where
+                # boxes are added at the beginning) to sam_prompt_encoder
+                if concat_points is not None:
+                    concat_coords = torch.cat([box_coords, concat_points[0]], dim=1)
+                    concat_labels = torch.cat([box_labels, concat_points[1]], dim=1)
+                    concat_points = (concat_coords, concat_labels)
+                else:
+                    concat_points = (box_coords, box_labels)
+
+            concat_points = (concat_points[0].clone(), concat_points[1].clone())
+            sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(
+                points=concat_points,
+                boxes=None,
+                masks=mask_input,
+            )
+
+            # Predict masks
+            batched_mode = (
+                concat_points is not None and concat_points[0].shape[0] > 1
+            )  # multi object prediction
+            high_res_features = [
+                feat_level[img_idx].unsqueeze(0)
+                for feat_level in self._features["high_res_feats"]
+            ]
+            low_res_masks, iou_predictions, _, _ = self.model.sam_mask_decoder(
+                image_embeddings=self._features["image_embed"][img_idx].unsqueeze(0).clone(),
+                image_pe=self.model.sam_prompt_encoder.get_dense_pe().clone(),
+                sparse_prompt_embeddings=sparse_embeddings.clone(),
+                dense_prompt_embeddings=dense_embeddings.clone(),
+                multimask_output=multimask_output,
+                repeat_image=batched_mode,
+                high_res_features=high_res_features,
+            )
+
+            # Upscale the masks to the original image resolution
+            masks = self._transforms.postprocess_masks(
+                low_res_masks, self._orig_hw[img_idx]
+            )
+            low_res_masks = torch.clamp(low_res_masks, -32.0, 32.0)
+            if not return_logits:
+                masks = masks > self.mask_threshold
+
+            maskss.append(masks)
+            iou_predictionss.append(iou_predictions)
+            low_res_maskss.append(low_res_masks)
+
+        return maskss, iou_predictionss, low_res_maskss
+
+
     def get_image_embedding(self) -> torch.Tensor:
         """
         Returns the image embeddings for the currently set image, with
