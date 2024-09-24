@@ -450,9 +450,7 @@ class SAM2ImagePredictor:
         img_idx: int = -1,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
-        maskss = []
-        iou_predictionss = []
-        low_res_maskss = []
+        concat_pointss = []
         for point_coords, point_labels in zip(point_coordss.unbind(), point_labelss.unbind()):
 
             if not self._is_image_set:
@@ -480,12 +478,24 @@ class SAM2ImagePredictor:
                     concat_points = (box_coords, box_labels)
 
             concat_points = (concat_points[0].clone(), concat_points[1].clone())
-            sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(
-                points=concat_points,
-                boxes=None,
-                masks=mask_input,
-            )
+            concat_pointss.append(concat_points)
 
+        sparse_embeddingss = []
+        dense_embeddingss = []
+        with torch.autograd.profiler.record_function(f"sam_prompt_encoder"):
+            for concat_points in concat_pointss:
+                sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(
+                    points=concat_points,
+                    boxes=None,
+                    masks=mask_input,
+                )
+                sparse_embeddingss.append(sparse_embeddings.clone())
+                dense_embeddingss.append(dense_embeddings.clone())
+
+        maskss = []
+        iou_predictionss = []
+        low_res_maskss = []
+        for sparse_embeddings, dense_embeddings in zip(sparse_embeddingss, dense_embeddingss):
             # Predict masks
             batched_mode = (
                 concat_points is not None and concat_points[0].shape[0] > 1
@@ -497,8 +507,8 @@ class SAM2ImagePredictor:
             low_res_masks, iou_predictions, _, _ = self.model.sam_mask_decoder(
                 image_embeddings=self._features["image_embed"][img_idx].unsqueeze(0).clone(),
                 image_pe=self.model.sam_prompt_encoder.get_dense_pe().clone(),
-                sparse_prompt_embeddings=sparse_embeddings.clone(),
-                dense_prompt_embeddings=dense_embeddings.clone(),
+                sparse_prompt_embeddings=sparse_embeddings,
+                dense_prompt_embeddings=dense_embeddings,
                 multimask_output=multimask_output,
                 repeat_image=batched_mode,
                 high_res_features=high_res_features,
