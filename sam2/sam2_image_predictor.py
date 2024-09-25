@@ -482,30 +482,30 @@ class SAM2ImagePredictor:
             concat_pointss_0.append(concat_points[0].clone())
             concat_pointss_1.append(concat_points[1].clone())
 
-        # concat_pointss_0_flat = torch.cat(concat_pointss_0)
-        # concat_pointss_1_flat = torch.cat(concat_pointss_1)
+        concat_pointss_0_flat = torch.cat(concat_pointss_0)
+        concat_pointss_1_flat = torch.cat(concat_pointss_1)
 
-        # with torch.autograd.profiler.record_function(f"sam_prompt_encoder"):
-        #     sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(
-        #         points=(concat_pointss_0_flat, concat_pointss_1_flat),
-        #         boxes=None,
-        #         masks=mask_input,
-        #     )
-        # sparse_embeddingss_1 = sparse_embeddings.split([concat_points[0].size(0)] * point_coordss.size(0))
-        # dense_embeddingss_1 = dense_embeddings.split([concat_points[0].size(0)] * point_coordss.size(0))
-
-        sparse_embeddingss = []
-        dense_embeddingss = []
         with torch.autograd.profiler.record_function(f"sam_prompt_encoder"):
-            for concat_points_0, concat_points_1 in zip(concat_pointss_0, concat_pointss_1):
-                concat_points = (concat_points_0, concat_points_1)
-                sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(
-                    points=concat_points,
-                    boxes=None,
-                    masks=mask_input,
-                )
-                sparse_embeddingss.append(sparse_embeddings.clone())
-                dense_embeddingss.append(dense_embeddings.clone())
+            sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(
+                points=(concat_pointss_0_flat, concat_pointss_1_flat),
+                boxes=None,
+                masks=mask_input,
+            )
+        sparse_embeddingss = sparse_embeddings.split([concat_points[0].size(0)] * point_coordss.size(0))
+        dense_embeddingss = dense_embeddings.split([concat_points[0].size(0)] * point_coordss.size(0))
+
+        # sparse_embeddingss = []
+        # dense_embeddingss = []
+        # with torch.autograd.profiler.record_function(f"sam_prompt_encoder"):
+        #     for concat_points_0, concat_points_1 in zip(concat_pointss_0, concat_pointss_1):
+        #         concat_points = (concat_points_0, concat_points_1)
+        #         sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(
+        #             points=concat_points,
+        #             boxes=None,
+        #             masks=mask_input,
+        #         )
+        #         sparse_embeddingss.append(sparse_embeddings.clone())
+        #         dense_embeddingss.append(dense_embeddings.clone())
 
         # for a0, a1 in zip(sparse_embeddingss, sparse_embeddingss_1):
         #     torch.testing.assert_allclose(a0, a1)
@@ -516,10 +516,10 @@ class SAM2ImagePredictor:
         iou_predictionss = []
         low_res_maskss = []
         for sparse_embeddings, dense_embeddings, concat_points_0, concat_points_1 in zip(sparse_embeddingss, dense_embeddingss, concat_pointss_0, concat_pointss_1):
-            print("sparse_embeddings.size()", sparse_embeddings.size())
-            print("dense_embeddings.size()", dense_embeddings.size())
-            print("concat_points_0.size()", concat_points_0.size())
-            print("concat_points_1.size()", concat_points_1.size())
+            # print("sparse_embeddings.size()", sparse_embeddings.size())
+            # print("dense_embeddings.size()", dense_embeddings.size())
+            # print("concat_points_0.size()", concat_points_0.size())
+            # print("concat_points_1.size()", concat_points_1.size())
             concat_points = (concat_points_0, concat_points_1)
             # Predict masks
             batched_mode = (
