@@ -2,6 +2,7 @@ import contextlib
 import torch
 from torch.utils._pytree import tree_map
 from typing import Dict
+from torch.nested._internal.nested_tensor import nested_view_from_values_offsets
 
 @contextlib.contextmanager
 def no_dispatch():
@@ -108,15 +109,35 @@ def ops_impl(cls, func, types, args, kwargs=None):
                          unwrapped_args[2],
                          unwrapped_args[3]))
 
-    if func == torch.ops.aten.mean.dim:
+    if func in [torch.ops.aten.mean.dim,
+                torch.ops.aten.max.dim,
+                torch.ops.aten.min.dim,
+                torch.ops.aten.amax.default,
+                torch.ops.aten.amin.default,
+                torch.ops.aten.sum.dim_IntList]:
         # TODO: THIS MIGHT BE WRONG
-        assert len(unwrapped_kwargs) == 0
-        assert len(unwrapped_args) == 3, f"args: {unwrapped_args}"
-        assert len(unwrapped_args[1]) == 1
-        dim = unwrapped_args[0].dim()
-        return wrap(func(unwrapped_args[0],
-                         [wrap_dim(unwrapped_args[1][0], dim - 1) + 1],
-                         unwrapped_args[2]))
+        if len(unwrapped_args) == 3 and len(unwrapped_kwargs) == 0:
+            assert len(unwrapped_args[1]) == 1
+            dim = unwrapped_args[0].dim()
+            return wrap(func(unwrapped_args[0],
+                             [wrap_dim(u, dim - 1) + 1 for u in unwrapped_args[1]],
+                             unwrapped_args[2]))
+        if len(unwrapped_args) == 2 and len(unwrapped_kwargs) == 1:
+            assert len(unwrapped_args[1]) == 1
+            dim = unwrapped_args[0].dim()
+            return wrap(func(unwrapped_args[0],
+                             [wrap_dim(u, dim - 1) + 1 for u in unwrapped_args[1]],
+                             **unwrapped_kwargs))
+        if len(unwrapped_args) == 2 and len(unwrapped_kwargs) == 0 and type(unwrapped_args[1]) == list:
+            assert len(unwrapped_args[1]) == 1
+            dim = unwrapped_args[0].dim()
+            return wrap(func(unwrapped_args[0],
+                             [wrap_dim(u, dim - 1) + 1 for u in unwrapped_args[1]]))
+        if len(unwrapped_args) == 2 and len(unwrapped_kwargs) == 0 and type(unwrapped_args[1]) == int:
+            dim = unwrapped_args[0].dim()
+            return wrap(func(unwrapped_args[0], wrap_dim(unwrapped_args[1], dim - 1) + 1))
+        import pdb; pdb.set_trace()
+        return NotImplemented
 
     view_ops = [torch.ops.aten._unsafe_view.default,
                 torch.ops.aten.expand.default]
@@ -319,13 +340,33 @@ def ops_impl(cls, func, types, args, kwargs=None):
             return (wrap(sdpa_res[0].view((a1_size[0],) + a0_size)),) + sdpa_res[1:]
         return NotImplemented
 
-    # Only needed by inductor for compile
-    if func == torch.ops.aten._unsafe_index.Tensor:
+    # torch.ops.aten._unsafe_index.Tensor is only needed by inductor for compile
+    if func in [torch.ops.aten._unsafe_index.Tensor, torch.ops.aten.index.Tensor]:
         assert len(unwrapped_kwargs) == 0
         assert len(unwrapped_args) == 2, f"args: {unwrapped_args}"
+        # if len(args[1]) == 1 and isinstance(args[1][0], MapTensor) and isinstance(args[0], MapTensor):
+        #     return wrap(func(*unwrapped_args))
+        if len(args[1]) == 1 and isinstance(args[1][0], MapTensor) and not isinstance(args[0], MapTensor):
+            tensors = [func(args[0], [args[1][0].elems[i]]) for i in range(len(args[1][0].elems))]
+            values = torch.cat(tensors)
+            lengths = torch.tensor([0] + [t.size(0) for t in tensors], pin_memory=True).to(values.device, non_blocking=True)
+            offsets = torch.cumsum(lengths, dim=0)
+            nt = nested_view_from_values_offsets(values, offsets)
+            assert nt.layout == torch.jagged
+            return wrap(nt)
+        if isinstance(args[0], MapTensor) and not isinstance(args[1][0], MapTensor) and len(args[1]) == 1:
+            return wrap(func(args[0].elems, [args[1][0].unsqueeze(0)]))
+        if isinstance(args[0], MapTensor) and isinstance(args[1][0], MapTensor) and len(args[1]) == 1:
+            tensors = [func(args[0].elems[i], [args[1][0].elems[i]]) for i in range(len(args[0].elems))]
+            values = torch.cat(tensors)
+            lengths = torch.tensor([0] + [t.size(0) for t in tensors], pin_memory=True).to(values.device, non_blocking=True)
+            offsets = torch.cumsum(lengths, dim=0)
+            nt = nested_view_from_values_offsets(values, offsets)
+            assert nt.layout == torch.jagged
+            return wrap(nt)
         a = unwrapped_args[0]
         a = unwrapped_args[0].flatten(0, 1)
-        resa = func(*((a,) + unwrapped_args[1:]))
+        resa = func(a, args[1])
         resb = resa.view((unwrapped_args[0].size(0), unwrapped_args[0].size(1)) + resa.size()[1:])
         return wrap(resb)
 
@@ -349,44 +390,54 @@ def ops_impl(cls, func, types, args, kwargs=None):
                        torch.ops.aten.where.self,
                        torch.ops.aten.zeros_like.default,
                        torch.ops.aten._to_copy.default,
+                       torch.ops.aten.gt.Scalar,
+                       torch.ops.aten.ge.Scalar,
                    ]
     if func in forwardables:
         return wrap(func(*unwrapped_args, **unwrapped_kwargs))
-    print("WARNING! Not officially marked as forwardable: torch.ops.", func)
+    print(f"WARNING! Not officially marked as forwardable: torch.ops.{func}")
     return wrap(func(*unwrapped_args, **unwrapped_kwargs))
 
 class MapTensor(torch.Tensor):
     @staticmethod
     def __new__(cls, elems):
         elem = elems[0]
+        print("elems.layout: ", elems.layout)
         return torch.Tensor._make_wrapper_subclass(cls,
                                                    elem.shape,
                                                    dtype=elem.dtype,
-                                                   device=elem.device)
+                                                   device=elem.device,
+                                                   layout=elems.layout,
+                                                   dispatch_layout=True)
 
     def __init__(self, elems):
         self.elems = elems
 
     @classmethod
     def __torch_dispatch__(cls, func, types, args, kwargs=None):
-        # print("func: ", func)
+        print("func: ", func)
+        # print("func: ", func, "args: ", [type(a.elems) if isinstance(a, MapTensor) else None for a in args])
+        # if func == torch.ops.aten.gt.Scalar:
+        #     import pdb; pdb.set_trace()
+        # print("func: ", func, "args: ", [a.size() if isinstance(a, torch.Tensor) else a for a in args])
+        return ops_impl(cls, func, types, args, kwargs)
         res = ops_impl(cls, func, types, args, kwargs)
-        # if isinstance(res, torch.Tensor):
-        #     unwrapped_args_0 = tree_map(lambda x: unwrap_i(x, 0), args)
-        #     unwrapped_kwargs_0 = tree_map(lambda x: unwrap_i(x, 0), kwargs)
-        #     if func == torch.ops.aten.view.default:
-        #         res_0 = torch.ops.aten.reshape.default(*unwrapped_args_0, **unwrapped_kwargs_0)
-        #     else:
-        #         res_0 = func(*unwrapped_args_0, **unwrapped_kwargs_0)
-        #     if res.elems[0].size() != res_0.size():
-        #         import pdb; pdb.set_trace()
-        #         print("02390")
-        #     if not torch.allclose(res.elems[0], res_0, atol=1e-3, rtol=1e-3):
-        #         import pdb; pdb.set_trace()
-        #         print("SDJFKL")
-        # else:
-        #     pass
-        #     # print("res got type: ", type(res))
+        if isinstance(res, torch.Tensor):
+            unwrapped_args_0 = tree_map(lambda x: unwrap_i(x, 0), args)
+            unwrapped_kwargs_0 = tree_map(lambda x: unwrap_i(x, 0), kwargs)
+            if func == torch.ops.aten.view.default:
+                res_0 = torch.ops.aten.reshape.default(*unwrapped_args_0, **unwrapped_kwargs_0)
+            else:
+                res_0 = func(*unwrapped_args_0, **unwrapped_kwargs_0)
+            if res.elems[0].size() != res_0.size():
+                import pdb; pdb.set_trace()
+                print("02390")
+            if not torch.allclose(res.elems[0], res_0, atol=1e-3, rtol=1e-3):
+                import pdb; pdb.set_trace()
+                print("SDJFKL")
+        else:
+            pass
+            print("res got type: ", type(res))
         return res
 
     __torch_function__ = torch._C._disabled_torch_function_impl
