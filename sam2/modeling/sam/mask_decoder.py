@@ -234,6 +234,7 @@ class MaskDecoder(nn.Module):
             # ## print("**** 0 b[-1].sum(): ", b[-1].sum())
             # ## upscaled_embedding = act2(b)
             # ## # upscaled_embedding = act2(dc2(upscaled_embedding) + feat_s0)
+            # TODO: Crazy batch size bug. Somehow 1024 breaks it.
             upscaled_embedding = act2(torch.cat([dc2(upscaled_embedding[:512]), dc2(upscaled_embedding[-512:])]) + feat_s0)
             # print("**** 1 upscaled_embedding[-1].sum(): ", upscaled_embedding[-1].sum())
 

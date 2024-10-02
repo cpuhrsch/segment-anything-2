@@ -4,6 +4,11 @@ import matplotlib.pyplot as plt
 import cv2
 import torch.utils.benchmark as benchmark
 
+from torch._inductor import config as inductorconfig
+inductorconfig.triton.unique_kernel_names = True
+inductorconfig.coordinate_descent_tuning = True
+inductorconfig.coordinate_descent_check_all_directions = True
+
 def profiler_runner(path, fn, *args, **kwargs):
     with torch.profiler.profile(
             activities=[torch.profiler.ProfilerActivity.CPU,
@@ -66,7 +71,8 @@ mask_generator = SAM2AutomaticMaskGenerator(sam2, points_per_batch=None)
 ## TODO: Using CUDA graphs can cause numerical differences?
 mask_generator.predictor.model.image_encoder = torch.compile(
     mask_generator.predictor.model.image_encoder,
-    mode="max-autotune-no-cudagraphs",
+    # mode="max-autotune-no-cudagraphs",
+    mode="max-autotune",
     fullgraph=True,
     dynamic=False,
 )
