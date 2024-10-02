@@ -71,6 +71,37 @@ class MaskData:
             else:
                 raise TypeError(f"MaskData key {k} has an unsupported type {type(v)}.")
 
+    def batched_cat(self, list_of_new_stats: "List[MaskData]") -> None:
+        list_of_keys = []
+        for new_stats in list_of_new_stats:
+            list_of_keys.append(sorted([k for (k, _) in new_stats.items()]))
+        assert len(list_of_keys) > 0
+        assert all(len(list_of_keys[0]) == len(l) for l in list_of_keys)
+        for i in range(1, len(list_of_keys)):
+            for j in range(len(list_of_keys[0])):
+                assert list_of_keys[0][j] == list_of_keys[i][j]
+        all_stats = {}
+        for new_stats in list_of_new_stats:
+            for k, v in new_stats.items():
+                if k not in all_stats or all_stats[k] is None:
+                    all_stats[k] = [deepcopy(v)]
+                elif isinstance(v, torch.Tensor):
+                    all_stats[k].append(v)
+                elif isinstance(v, np.ndarray):
+                    all_stats[k].append(v)
+                elif isinstance(v, list):
+                    all_stats[k].append(v)
+                else:
+                    raise TypeError(f"MaskData key {k} has an unsupported type {type(v)}.")
+        for k, v in all_stats.items():
+            assert len(v) > 0
+            if isinstance(v[0], torch.Tensor):
+                self._stats[k] = torch.cat(v, dim=0)
+            elif isinstance(v[0], list):
+                self._stats[k] = sum(v, [])
+            else:
+                raise TypeError(f"MaskData key {k} has an unsupported type {type(v)}.")
+
     def to_numpy(self) -> None:
         for k, v in self._stats.items():
             if isinstance(v, torch.Tensor):
@@ -272,6 +303,7 @@ def generate_crop_boxes(
     return crop_boxes, layer_idxs
 
 
+@torch.compile()
 def uncrop_boxes_xyxy(boxes: torch.Tensor, crop_box: List[int]) -> torch.Tensor:
     x0, y0, _, _ = crop_box
     offset = torch.tensor([[x0, y0, x0, y0]], device=boxes.device)
@@ -281,6 +313,7 @@ def uncrop_boxes_xyxy(boxes: torch.Tensor, crop_box: List[int]) -> torch.Tensor:
     return boxes + offset
 
 
+@torch.compile()
 def uncrop_points(points: torch.Tensor, crop_box: List[int]) -> torch.Tensor:
     x0, y0, _, _ = crop_box
     offset = torch.tensor([[x0, y0]], device=points.device)
