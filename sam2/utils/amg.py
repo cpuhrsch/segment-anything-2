@@ -48,7 +48,8 @@ class MaskData:
             if v is None:
                 self._stats[k] = None
             elif isinstance(v, torch.Tensor):
-                self._stats[k] = v[torch.as_tensor(keep, device=v.device)]
+                # self._stats[k] = v[torch.as_tensor(keep, device=v.device)]
+                self._stats[k] = v[keep]
             elif isinstance(v, np.ndarray):
                 self._stats[k] = v[keep.detach().cpu().numpy()]
             elif isinstance(v, list) and keep.dtype == torch.bool:
@@ -122,6 +123,7 @@ def mask_to_rle_pytorch_2(tensor: torch.Tensor) -> List[Dict[str, Any]]:
     a = torch.tensor([[True]])
     if diff.is_cuda:
         a = a.pin_memory().cuda()
+        # a = a.to(diff.device)
     a = a.expand_as(diff.narrow(1, 0, 1))
     diff = torch.cat([a, diff, a], dim=1)
     change_indices = diff.nonzero()
@@ -206,14 +208,16 @@ def calculate_stability_score(
     # Save memory by preventing unnecessary cast to torch.int64
     intersections = (
         (masks > (mask_threshold + threshold_offset))
-        .sum(-1, dtype=torch.int16)
-        .sum(-1, dtype=torch.int32)
+        .sum(-1) #, dtype=torch.int16)
+        .sum(-1) #, dtype=torch.int32)
     )
     unions = (
         (masks > (mask_threshold - threshold_offset))
-        .sum(-1, dtype=torch.int16)
-        .sum(-1, dtype=torch.int32)
+        .sum(-1) #, dtype=torch.int16)
+        .sum(-1) #, dtype=torch.int32)
     )
+    # print("masks[-1]: ", masks[-1])
+    # import pdb; pdb.set_trace()
     return intersections / unions
 
 
@@ -347,8 +351,9 @@ def batched_mask_to_box(masks: torch.Tensor) -> torch.Tensor:
     an empty mask. For input shape C1xC2x...xHxW, the output shape is C1xC2x...x4.
     """
     # torch.max below raises an error on empty inputs, just skip in this case
-    if torch.numel(masks) == 0:
-        return torch.zeros(*masks.shape[:-2], 4, device=masks.device)
+    # TODO: Add an assert
+    # if torch.numel(masks) == 0:
+    #     return torch.zeros(*masks.shape[:-2], 4, device=masks.device)
 
     # Normalize shape to CxHxW
     shape = masks.shape

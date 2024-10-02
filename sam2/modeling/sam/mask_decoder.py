@@ -141,6 +141,7 @@ class MaskDecoder(nn.Module):
             repeat_image=repeat_image,
             high_res_features=high_res_features,
         )
+        print("*** masks[-1].sum(): ", masks[-1].sum())
 
         # Select the correct mask or masks for output
         if multimask_output:
@@ -162,6 +163,7 @@ class MaskDecoder(nn.Module):
             # are always the single mask token (and we'll let it be the object-memory token).
             sam_tokens_out = mask_tokens_out[:, 0:1]  # [b, 1, c] shape
 
+        print("** masks[-1].sum(): ", masks[-1].sum())
         # Prepare output
         return masks, iou_pred, sam_tokens_out, object_score_logits
 
@@ -222,7 +224,18 @@ class MaskDecoder(nn.Module):
             dc1, ln1, act1, dc2, act2 = self.output_upscaling
             feat_s0, feat_s1 = high_res_features
             upscaled_embedding = act1(ln1(dc1(src) + feat_s1))
-            upscaled_embedding = act2(dc2(upscaled_embedding) + feat_s0)
+            print("**** 0 upscaled_embedding[-1].sum(): ", upscaled_embedding[-1].sum())
+            print("**** dc2.weight.sum(): ", dc2.weight.sum())
+            ## import pdb; pdb.set_trace()
+            ## # a = dc2(upscaled_embedding)
+            ## a = torch.cat([dc2(upscaled_embedding[:512]), dc2(upscaled_embedding[-512:])])
+            ## print("**** 0 a[-1].sum(): ", a[-1].sum())
+            ## b = a + feat_s0
+            ## print("**** 0 b[-1].sum(): ", b[-1].sum())
+            ## upscaled_embedding = act2(b)
+            ## # upscaled_embedding = act2(dc2(upscaled_embedding) + feat_s0)
+            upscaled_embedding = act2(torch.cat([dc2(upscaled_embedding[:512]), dc2(upscaled_embedding[-512:])]) + feat_s0)
+            print("**** 1 upscaled_embedding[-1].sum(): ", upscaled_embedding[-1].sum())
 
         hyper_in_list: List[torch.Tensor] = []
         for i in range(self.num_mask_tokens):
@@ -230,8 +243,11 @@ class MaskDecoder(nn.Module):
                 self.output_hypernetworks_mlps[i](mask_tokens_out[:, i, :])
             )
         hyper_in = torch.stack(hyper_in_list, dim=1)
+        print("**** hyper_in[-1].sum(): ", hyper_in[-1].sum())
+        print("**** upscaled_embedding[-1].sum(): ", upscaled_embedding[-1].sum())
         b, c, h, w = upscaled_embedding.shape
         masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
+        print("**** masks[-1].sum(): ", masks[-1].sum())
 
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)

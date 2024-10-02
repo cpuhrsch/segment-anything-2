@@ -267,29 +267,53 @@ class SAM2AutomaticMaskGenerator:
         points_for_image = self.point_grids[crop_layer_idx] * points_scale
 
         # Generate masks for this crop in batches
-        data = MaskData()
+        # data = MaskData()
+        data = None
+        i = 0
         for (points,) in batch_iterator(self.points_per_batch, points_for_image):
+            print("\nlen(points): ", len(points))
+            print("points: ", points)
+            i += 1
             batch_data = self._process_batch(
                 points, cropped_im_size, crop_box, orig_size, normalize=True
             )
-            data.cat(batch_data)
-            del batch_data
+            with torch.autograd.profiler.record_function("mask_to_rle_pytorch_2"):
+                print("batch_data['masks'].size(): ", batch_data['masks'].size())
+                # import pdb; pdb.set_trace()
+                batch_data["rles"] = mask_to_rle_pytorch_2(batch_data["masks"])
+            with torch.autograd.profiler.record_function("del 0"):
+                del batch_data["masks"]
+            if data is None:
+                data = batch_data
+            else:
+                with torch.autograd.profiler.record_function("cat"):
+                    data.cat(batch_data)
+                with torch.autograd.profiler.record_function("del 1"):
+                    del batch_data
         self.predictor.reset_predictor()
 
-        # Remove duplicates within this crop.
-        keep_by_nms = batched_nms(
-            data["boxes"].float(),
-            data["iou_preds"],
-            torch.zeros_like(data["boxes"][:, 0]),  # categories
-            iou_threshold=self.box_nms_thresh,
-        )
-        data.filter(keep_by_nms)
+        with torch.autograd.profiler.record_function("batched_nms"):
+            # Remove duplicates within this crop.
+            print("data['boxes'].size(): ", data['boxes'].size())
+            keep_by_nms = batched_nms(
+                data["boxes"].float(),
+                data["iou_preds"],
+                torch.zeros_like(data["boxes"][:, 0]),  # categories
+                iou_threshold=self.box_nms_thresh,
+            )
+        with torch.autograd.profiler.record_function("filter"):
+            data.filter(keep_by_nms)
 
-        # Return to the original image frame
-        data["boxes"] = uncrop_boxes_xyxy(data["boxes"], crop_box)
-        data["points"] = uncrop_points(data["points"], crop_box)
-        data["crop_boxes"] = torch.tensor([crop_box for _ in range(len(data["rles"]))])
+        with torch.autograd.profiler.record_function("uncrop_boxes_xyxy"):
+            # Return to the original image frame
+            data["boxes"] = uncrop_boxes_xyxy(data["boxes"], crop_box)
+        with torch.autograd.profiler.record_function("uncrop_points"):
+            data["points"] = uncrop_points(data["points"], crop_box)
+        with torch.autograd.profiler.record_function("crop_boxes"):
+            data["crop_boxes"] = torch.tensor([crop_box for _ in range(len(data["rles"]))])
 
+        # import pdb; pdb.set_trace()
+        # import sys; sys.exit(1)
         return data
 
     def _process_batch(
@@ -319,29 +343,49 @@ class SAM2AutomaticMaskGenerator:
                 multimask_output=self.multimask_output,
                 return_logits=True,
             )
+            print("* masks[-1].sum(): ", masks[-1].sum())
 
-        # Serialize predictions and store in MaskData
-        data = MaskData(
-            masks=masks.flatten(0, 1),
-            iou_preds=iou_preds.flatten(0, 1),
-            points=points.repeat_interleave(masks.shape[1], dim=0),
-            low_res_masks=low_res_masks.flatten(0, 1),
-        )
-        del masks
+        print("masks.size(): ", masks.size())
+        print("iou_preds.size(): ", iou_preds.size())
+        print("low_res_masks.size(): ", low_res_masks.size())
+        # print("iou_preds: ", iou_preds)
+
+        with torch.autograd.profiler.record_function("MaskData"):
+            # Serialize predictions and store in MaskData
+            data = MaskData(
+                masks=masks.flatten(0, 1),
+                iou_preds=iou_preds.flatten(0, 1),
+                points=points.repeat_interleave(masks.shape[1], dim=0),
+                low_res_masks=low_res_masks.flatten(0, 1),
+            )
+            del masks
+
+        print("0 data['masks'].size(): ", data['masks'].size())
+        # import pdb; pdb.set_trace()
 
         if not self.use_m2m:
-            # Filter by predicted IoU
-            if self.pred_iou_thresh > 0.0:
-                keep_mask = data["iou_preds"] > self.pred_iou_thresh
-                data.filter(keep_mask)
+            with torch.autograd.profiler.record_function("thresh and filter"):
+                # Filter by predicted IoU
+                if self.pred_iou_thresh > 0.0:
+                    keep_mask = data["iou_preds"] > self.pred_iou_thresh
+                    data.filter(keep_mask)
+            print("10 data['masks'].size(): ", data['masks'].size())
 
-            # Calculate and filter by stability score
-            data["stability_score"] = calculate_stability_score(
-                data["masks"], self.mask_threshold, self.stability_score_offset
-            )
-            if self.stability_score_thresh > 0.0:
-                keep_mask = data["stability_score"] >= self.stability_score_thresh
-                data.filter(keep_mask)
+            with torch.autograd.profiler.record_function("calculate_stability_score"):
+                # Calculate and filter by stability score
+                data["stability_score"] = calculate_stability_score(
+                    data["masks"], self.mask_threshold, self.stability_score_offset
+                )
+            print("self.stability_score_thresh: ", self.stability_score_thresh)
+            # print("data['stability_score']: ", data["stability_score"])
+            with torch.autograd.profiler.record_function("stability_score_thresh"):
+                if self.stability_score_thresh > 0.0:
+                    keep_mask = data["stability_score"] >= self.stability_score_thresh
+                    print("keep_mask.size(): ", keep_mask.size())
+                    print("keep_mask.sum(): ", keep_mask.sum())
+                    print("11 data['masks'].size(): ", data['masks'].size())
+                    data.filter(keep_mask)
+            print("12 data['masks'].size(): ", data['masks'].size())
         else:
             # One step refinement using previous mask predictions
             in_points = self.predictor._transforms.transform_coords(
@@ -367,21 +411,28 @@ class SAM2AutomaticMaskGenerator:
                 keep_mask = data["stability_score"] >= self.stability_score_thresh
                 data.filter(keep_mask)
 
-        # Threshold masks and calculate boxes
-        data["masks"] = data["masks"] > self.mask_threshold
-        data["boxes"] = batched_mask_to_box(data["masks"])
+        print("2 data['masks'].size(): ", data['masks'].size())
 
-        # Filter boxes that touch crop boundaries
-        keep_mask = ~is_box_near_crop_edge(
-            data["boxes"], crop_box, [0, 0, orig_w, orig_h]
-        )
-        if not torch.all(keep_mask):
+        with torch.autograd.profiler.record_function("Threshold masks and calculate boxes"):
+            # Threshold masks and calculate boxes
+            data["masks"] = data["masks"] > self.mask_threshold
+            data["boxes"] = batched_mask_to_box(data["masks"])
+
+        with torch.autograd.profiler.record_function("is_box_near_crop_edge"):
+            # Filter boxes that touch crop boundaries
+            keep_mask = ~is_box_near_crop_edge(
+                data["boxes"], crop_box, [0, 0, orig_w, orig_h]
+            )
+
+        with torch.autograd.profiler.record_function("filter(keep_mask)"):
+            # if not torch.all(keep_mask):
             data.filter(keep_mask)
 
-        # Compress to RLE
-        data["masks"] = uncrop_masks(data["masks"], crop_box, orig_h, orig_w)
-        data["rles"] = mask_to_rle_pytorch_2(data["masks"])
-        del data["masks"]
+        with torch.autograd.profiler.record_function("uncrop_masks"):
+            # Compress to RLE
+            data["masks"] = uncrop_masks(data["masks"], crop_box, orig_h, orig_w)
+        # data["rles"] = mask_to_rle_pytorch_2(data["masks"])
+        # del data["masks"]
 
         return data
 
