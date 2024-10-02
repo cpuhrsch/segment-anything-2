@@ -78,13 +78,13 @@ mask_generator.predictor.model.image_encoder = torch.compile(
 #     dynamic=False,
 # )
 
-# torch._dynamo.config.capture_dynamic_output_shape_ops = True
-# mask_generator._process_batch = torch.compile(
-#     mask_generator._process_batch,
-#     mode="max-autotune-no-cudagraphs",
-#     fullgraph=True,
-#     dynamic=True,
-# )
+torch._dynamo.config.capture_dynamic_output_shape_ops = True
+mask_generator._process_batch = torch.compile(
+    mask_generator._process_batch,
+    mode="max-autotune-no-cudagraphs",
+    fullgraph=True,
+    dynamic=True,
+)
 
 
 # Run thrice for warmup

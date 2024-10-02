@@ -271,14 +271,14 @@ class SAM2AutomaticMaskGenerator:
         data = None
         i = 0
         for (points,) in batch_iterator(self.points_per_batch, points_for_image):
-            print("\nlen(points): ", len(points))
-            print("points: ", points)
+            # print("\nlen(points): ", len(points))
+            # print("points: ", points)
             i += 1
             batch_data = self._process_batch(
                 points, cropped_im_size, crop_box, orig_size, normalize=True
             )
             with torch.autograd.profiler.record_function("mask_to_rle_pytorch_2"):
-                print("batch_data['masks'].size(): ", batch_data['masks'].size())
+                # print("batch_data['masks'].size(): ", batch_data['masks'].size())
                 # import pdb; pdb.set_trace()
                 batch_data["rles"] = mask_to_rle_pytorch_2(batch_data["masks"])
             with torch.autograd.profiler.record_function("del 0"):
@@ -293,8 +293,8 @@ class SAM2AutomaticMaskGenerator:
         self.predictor.reset_predictor()
 
         with torch.autograd.profiler.record_function("batched_nms"):
-            # Remove duplicates within this crop.
-            print("data['boxes'].size(): ", data['boxes'].size())
+            # # Remove duplicates within this crop.
+            # print("data['boxes'].size(): ", data['boxes'].size())
             keep_by_nms = batched_nms(
                 data["boxes"].float(),
                 data["iou_preds"],
@@ -343,12 +343,12 @@ class SAM2AutomaticMaskGenerator:
                 multimask_output=self.multimask_output,
                 return_logits=True,
             )
-            print("* masks[-1].sum(): ", masks[-1].sum())
+            # print("* masks[-1].sum(): ", masks[-1].sum())
 
-        print("masks.size(): ", masks.size())
-        print("iou_preds.size(): ", iou_preds.size())
-        print("low_res_masks.size(): ", low_res_masks.size())
-        # print("iou_preds: ", iou_preds)
+        # print("masks.size(): ", masks.size())
+        # print("iou_preds.size(): ", iou_preds.size())
+        # print("low_res_masks.size(): ", low_res_masks.size())
+        # # print("iou_preds: ", iou_preds)
 
         with torch.autograd.profiler.record_function("MaskData"):
             # Serialize predictions and store in MaskData
@@ -360,7 +360,7 @@ class SAM2AutomaticMaskGenerator:
             )
             del masks
 
-        print("0 data['masks'].size(): ", data['masks'].size())
+        # print("0 data['masks'].size(): ", data['masks'].size())
         # import pdb; pdb.set_trace()
 
         if not self.use_m2m:
@@ -369,23 +369,23 @@ class SAM2AutomaticMaskGenerator:
                 if self.pred_iou_thresh > 0.0:
                     keep_mask = data["iou_preds"] > self.pred_iou_thresh
                     data.filter(keep_mask)
-            print("10 data['masks'].size(): ", data['masks'].size())
+            # print("10 data['masks'].size(): ", data['masks'].size())
 
             with torch.autograd.profiler.record_function("calculate_stability_score"):
                 # Calculate and filter by stability score
                 data["stability_score"] = calculate_stability_score(
                     data["masks"], self.mask_threshold, self.stability_score_offset
                 )
-            print("self.stability_score_thresh: ", self.stability_score_thresh)
-            # print("data['stability_score']: ", data["stability_score"])
+            # print("self.stability_score_thresh: ", self.stability_score_thresh)
+            # # print("data['stability_score']: ", data["stability_score"])
             with torch.autograd.profiler.record_function("stability_score_thresh"):
                 if self.stability_score_thresh > 0.0:
                     keep_mask = data["stability_score"] >= self.stability_score_thresh
-                    print("keep_mask.size(): ", keep_mask.size())
-                    print("keep_mask.sum(): ", keep_mask.sum())
-                    print("11 data['masks'].size(): ", data['masks'].size())
+                    # print("keep_mask.size(): ", keep_mask.size())
+                    # print("keep_mask.sum(): ", keep_mask.sum())
+                    # print("11 data['masks'].size(): ", data['masks'].size())
                     data.filter(keep_mask)
-            print("12 data['masks'].size(): ", data['masks'].size())
+            # print("12 data['masks'].size(): ", data['masks'].size())
         else:
             # One step refinement using previous mask predictions
             in_points = self.predictor._transforms.transform_coords(
@@ -411,7 +411,7 @@ class SAM2AutomaticMaskGenerator:
                 keep_mask = data["stability_score"] >= self.stability_score_thresh
                 data.filter(keep_mask)
 
-        print("2 data['masks'].size(): ", data['masks'].size())
+        # print("2 data['masks'].size(): ", data['masks'].size())
 
         with torch.autograd.profiler.record_function("Threshold masks and calculate boxes"):
             # Threshold masks and calculate boxes
