@@ -7,7 +7,7 @@
 import math
 from copy import deepcopy
 from itertools import product
-from typing import Any, Dict, Generator, ItemsView, List, Tuple
+from typing import Any, Dict, Generator, ItemsView, List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -97,10 +97,13 @@ def box_xyxy_to_xywh(box_xyxy: torch.Tensor) -> torch.Tensor:
     return box_xywh
 
 
-def batch_iterator(batch_size: int, *args) -> Generator[List[Any], None, None]:
+def batch_iterator(batch_size: Optional[int], *args) -> Generator[List[Any], None, None]:
     assert len(args) > 0 and all(
         len(a) == len(args[0]) for a in args
     ), "Batched iteration must have inputs of all the same size."
+    # If batch is None return a big batch
+    if batch_size is None:
+        batch_size = len(args[0])
     n_batches = len(args[0]) // batch_size + int(len(args[0]) % batch_size != 0)
     for b in range(n_batches):
         yield [arg[b * batch_size : (b + 1) * batch_size] for arg in args]
