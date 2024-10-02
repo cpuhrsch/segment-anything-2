@@ -305,6 +305,8 @@ class SAM2AutomaticMaskGenerator:
         orig_size: Tuple[int, ...],
         normalize=False,
     ) -> MaskData:
+
+        import pdb; pdb.set_trace()
         orig_h, orig_w = orig_size
 
         # Run model on this batch
@@ -380,8 +382,10 @@ class SAM2AutomaticMaskGenerator:
         keep_mask = ~is_box_near_crop_edge(
             data["boxes"], crop_box, [0, 0, orig_w, orig_h]
         )
-        if not torch.all(keep_mask):
-            data.filter(keep_mask)
+        # NOTE: This causes a bad sync and likely doesn't avoid much compute.
+        # if not torch.all(keep_mask):
+        #     data.filter(keep_mask)
+        data.filter(keep_mask)
 
         # Compress to RLE
         data["masks"] = uncrop_masks(data["masks"], crop_box, orig_h, orig_w)
@@ -493,8 +497,10 @@ class SAM2AutomaticMaskGenerator:
         keep_mask = ~is_box_near_crop_edge(
             data["boxes"], crop_box, [0, 0, orig_w, orig_h]
         )
-        if not torch.all(keep_mask):
-            data.filter(keep_mask)
+        # NOTE: This causes a bad sync and likely doesn't avoid much compute.
+        # if not torch.all(keep_mask):
+        #     data.filter(keep_mask)
+        data.filter(keep_mask)
 
         # Compress to RLE
         data["masks"] = uncrop_masks(data["masks"], crop_box, orig_h, orig_w)

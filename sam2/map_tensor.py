@@ -112,8 +112,10 @@ def ops_impl(cls, func, types, args, kwargs=None):
     if func in [torch.ops.aten.mean.dim,
                 torch.ops.aten.max.dim,
                 torch.ops.aten.min.dim,
+                torch.ops.aten.any.dim,
                 torch.ops.aten.amax.default,
                 torch.ops.aten.amin.default,
+                torch.ops.aten.all.default,
                 torch.ops.aten.sum.dim_IntList]:
         # TODO: THIS MIGHT BE WRONG
         if len(unwrapped_args) == 3 and len(unwrapped_kwargs) == 0:
@@ -136,7 +138,8 @@ def ops_impl(cls, func, types, args, kwargs=None):
         if len(unwrapped_args) == 2 and len(unwrapped_kwargs) == 0 and type(unwrapped_args[1]) == int:
             dim = unwrapped_args[0].dim()
             return wrap(func(unwrapped_args[0], wrap_dim(unwrapped_args[1], dim - 1) + 1))
-        import pdb; pdb.set_trace()
+        if len(args) == 1 and len(kwargs) == 0:
+            return wrap(func(unwrapped_args[0]))
         return NotImplemented
 
     view_ops = [torch.ops.aten._unsafe_view.default,
@@ -153,6 +156,8 @@ def ops_impl(cls, func, types, args, kwargs=None):
         assert len(unwrapped_args) == 2, f"args: {unwrapped_args}"
         input_size = unwrapped_args[0].size()
         bigger_size = list(input_size[:1]) + unwrapped_args[1]
+        if unwrapped_args[0].size() == tuple(bigger_size):
+            return wrap(args[0].elems)
         return wrap(unwrapped_args[0].reshape(bigger_size))
 
     if func in [torch.ops.aten.mm.default, torch.ops.aten.bmm.default]:
@@ -221,6 +226,13 @@ def ops_impl(cls, func, types, args, kwargs=None):
         return wrap(func(unwrapped_args[0],
                          wrap_dim(unwrapped_args[1], dim - 1) + 1,
                          wrap_dim(unwrapped_args[2], dim - 1) + 1))
+
+    if func == torch.ops.aten.permute.default:
+        assert len(unwrapped_kwargs) == 0
+        assert len(unwrapped_args) == 2, f"args: {unwrapped_args}"
+        dim = unwrapped_args[0].dim()
+        return wrap(func(unwrapped_args[0],
+                         ([0] + [wrap_dim(u, dim - 1) + 1 for u in unwrapped_args[1]])))
 
     if func == torch.ops.aten._scaled_dot_product_efficient_attention.default:
         assert len(args) == 5
@@ -370,6 +382,26 @@ def ops_impl(cls, func, types, args, kwargs=None):
         resb = resa.view((unwrapped_args[0].size(0), unwrapped_args[0].size(1)) + resa.size()[1:])
         return wrap(resb)
 
+    # Prims
+    if func == torch.ops.aten.dim.default:
+        assert len(args) == 1
+        assert len(kwargs) == 0
+        ret_dim = func(args[0].elems) - 1
+        assert ret_dim >= 0
+        return ret_dim
+
+    if func == torch.ops.aten.sym_size.default:
+        assert len(args) == 1
+        assert len(kwargs) == 0
+        elems_size = func(args[0].elems)
+        assert len(elems_size) > 0
+        return elems_size[1:]
+
+    if func == torch.ops.aten.is_contiguous.default:
+        assert len(args) == 1
+        assert len(kwargs) == 0
+        return func(args[0].elems)
+
     forwardables = [
                        torch.ops.aten.add.Tensor,
                        torch.ops.aten.clamp.default,
@@ -392,23 +424,39 @@ def ops_impl(cls, func, types, args, kwargs=None):
                        torch.ops.aten._to_copy.default,
                        torch.ops.aten.gt.Scalar,
                        torch.ops.aten.ge.Scalar,
+                       torch.ops.aten.bitwise_not.default,
+                       torch.ops.aten.lt.Tensor,
+                       torch.ops.aten.bitwise_or.Tensor,
+                       torch.ops.aten.eq.Tensor,
+                       torch.ops.aten.abs.default,
+                       torch.ops.aten.ne.Scalar,
+                       torch.ops.aten.le.Tensor,
+                       # Sketchy new in place ops
+                       torch.ops.aten.bitwise_and_.Tensor,
+                       torch.ops.aten.bitwise_or_.Tensor,
+                       torch.ops.aten.le.Tensor,
+                       torch.ops.aten.logical_and.default,
+                       # Prims
+                       torch.ops.prim.layout.default,
                    ]
     if func in forwardables:
         return wrap(func(*unwrapped_args, **unwrapped_kwargs))
     print(f"WARNING! Not officially marked as forwardable: torch.ops.{func}")
+    import pdb; pdb.set_trace()
     return wrap(func(*unwrapped_args, **unwrapped_kwargs))
 
 class MapTensor(torch.Tensor):
     @staticmethod
     def __new__(cls, elems):
-        elem = elems[0]
         print("elems.layout: ", elems.layout)
         return torch.Tensor._make_wrapper_subclass(cls,
-                                                   elem.shape,
-                                                   dtype=elem.dtype,
-                                                   device=elem.device,
+                                                   elems.shape[1:],
+                                                   dtype=elems.dtype,
+                                                   device=elems.device,
                                                    layout=elems.layout,
-                                                   dispatch_layout=True)
+                                                   dispatch_layout=True,
+                                                   dispatch_sizes_strides_policy=("sizes" if elems.layout == torch.jagged else None),
+                                                   storage_size=(elems._values.untyped_storage().size() if elems.layout == torch.jagged else None))
 
     def __init__(self, elems):
         self.elems = elems
@@ -440,7 +488,18 @@ class MapTensor(torch.Tensor):
             print("res got type: ", type(res))
         return res
 
-    __torch_function__ = torch._C._disabled_torch_function_impl
+    # __torch_function__ = torch._C._disabled_torch_function_impl
+
+    @classmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        if kwargs is None:
+            kwargs = {}
+        print("TF func: ", func)
+        if torch._C.TensorBase.flatten == func:
+            # import pdb; pdb.set_trace()
+            pass
+        with torch._C.DisableTorchFunctionSubclass():
+            return func(*args, **kwargs)
 
     # flatten/unflatten is needed for compile
     def __tensor_flatten__(self):
