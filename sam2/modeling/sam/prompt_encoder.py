@@ -194,4 +194,6 @@ class PromptEncoder(nn.Module):
                 bs, -1, self.image_embedding_size[0], self.image_embedding_size[1]
             )
 
+        # import pdb; pdb.set_trace()
+
         return sparse_embeddings, dense_embeddings

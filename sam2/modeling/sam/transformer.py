@@ -8,7 +8,7 @@ import contextlib
 import math
 import warnings
 from functools import partial
-from typing import Tuple, Type
+from typing import Tuple, Type, Dict, Any, List
 
 import torch
 import torch.nn.functional as F
@@ -235,12 +235,50 @@ class Attention(nn.Module):
             self.internal_dim % num_heads == 0
         ), "num_heads must divide embedding_dim."
 
-        self.q_proj = nn.Linear(embedding_dim, self.internal_dim)
-        self.k_proj = nn.Linear(self.kv_in_dim, self.internal_dim)
-        self.v_proj = nn.Linear(self.kv_in_dim, self.internal_dim)
+        # print(f"self.internal_dim: {self.internal_dim}, self.kv_in_dim: {self.kv_in_dim}, self.embedding_dim: {self.embedding_dim}")
+        if self.embedding_dim == self.kv_in_dim:
+            self.qkv_proj_weight = torch.nn.Parameter(torch.empty((3 * self.internal_dim, embedding_dim)))
+            self.qkv_proj_bias = torch.nn.Parameter(torch.empty(3 * self.internal_dim))
+        else:
+            self.q_proj = nn.Linear(embedding_dim, self.internal_dim)
+            self.k_proj = nn.Linear(self.kv_in_dim, self.internal_dim)
+            self.v_proj = nn.Linear(self.kv_in_dim, self.internal_dim)
+
         self.out_proj = nn.Linear(self.internal_dim, embedding_dim)
 
         self.dropout_p = dropout
+        self._register_load_state_dict_pre_hook(self.load_hook)
+
+    def load_hook(
+        self,
+        state_dict: Dict[str, Any],
+        prefix: str,
+        local_metadata: Dict[str, Any],
+        strict: bool,
+        missing_keys: List[str],
+        unexpected_keys: List[str],
+        error_msgs: List[str],
+    ) -> None:
+        if prefix + "q_proj.weight" in state_dict:
+            wq = state_dict.pop(prefix + "q_proj.weight")
+            wk = state_dict.pop(prefix + "k_proj.weight")
+            wv = state_dict.pop(prefix + "v_proj.weight")
+            bq = state_dict.pop(prefix + "q_proj.bias")
+            bk = state_dict.pop(prefix + "k_proj.bias")
+            bv = state_dict.pop(prefix + "v_proj.bias")
+            assert bq is not None
+            assert bk is not None
+            assert bv is not None
+            if wq.size() == wk.size() == wv.size():
+                state_dict[prefix + "qkv_proj_weight"] = torch.cat([wq, wk, wv], dim=0)
+                state_dict[prefix + "qkv_proj_bias"] = torch.cat([bq, bk, bv], dim=0)
+            else:
+                state_dict[prefix + "q_proj.weight"] = wq
+                state_dict[prefix + "k_proj.weight"] = wk
+                state_dict[prefix + "v_proj.weight"] = wv
+                state_dict[prefix + "q_proj.bias"] = bq
+                state_dict[prefix + "k_proj.bias"] = bk
+                state_dict[prefix + "v_proj.bias"] = bv
 
     def _separate_heads(self, x: Tensor, num_heads: int) -> Tensor:
         b, n, c = x.shape
@@ -253,10 +291,23 @@ class Attention(nn.Module):
         return x.reshape(b, n_tokens, n_heads * c_per_head)  # B x N_tokens x C
 
     def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+        # print("COUNT")
         # Input projections
-        q = self.q_proj(q)
-        k = self.k_proj(k)
-        v = self.v_proj(v)
+
+        if self.embedding_dim == self.kv_in_dim:
+            # print("(q is k): ", (q is k), " (k is v): ", (k is v))
+            if (q is k) and (k is v):
+                q, k, v = F.linear(q, self.qkv_proj_weight, self.qkv_proj_bias).chunk(3, -1)
+            else:
+                wq, wk, wv = self.qkv_proj_weight.chunk(3, 0)
+                bq, bk, bv = self.qkv_proj_bias.chunk(3, 0)
+                q = F.linear(q, wq, bq)
+                k = F.linear(k, wk, bk)
+                v = F.linear(v, wv, bv)
+        else:
+            q = self.q_proj(q)
+            k = self.k_proj(k)
+            v = self.v_proj(v)
 
         # Separate into heads
         q = self._separate_heads(q, self.num_heads)
@@ -265,6 +316,8 @@ class Attention(nn.Module):
 
         dropout_p = self.dropout_p if self.training else 0.0
         # Attention
+        # import pdb; pdb.set_trace()
+        # print("4380348FLJSDLK", " id(q): ", id(q), " id(k): ", id(k), " id(v): ", id(v))
         out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
         # try:
         #     with sdp_kernel_context(dropout_p):
@@ -337,6 +390,8 @@ class RoPEAttention(Attention):
             freqs_cis=self.freqs_cis,
             repeat_freqs_k=self.rope_k_repeat,
         )
+
+        print("JSKDFLJSDLK")
 
         dropout_p = self.dropout_p if self.training else 0.0
         # Attention

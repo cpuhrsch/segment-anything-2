@@ -200,15 +200,18 @@ class MaskDecoder(nn.Module):
 
         # Expand per-image data in batch direction to be per-mask
         if repeat_image:
-            src = torch.repeat_interleave(image_embeddings, tokens.shape[0], dim=0)
+            # src = torch.repeat_interleave(image_embeddings, tokens.shape[0], dim=0)
+            src = image_embeddings.expand((tokens.shape[0],) + image_embeddings.size()[1:])
         else:
             assert image_embeddings.shape[0] == tokens.shape[0]
             src = image_embeddings
+        # import pdb; pdb.set_trace()
         src = src + dense_prompt_embeddings
         assert (
             image_pe.size(0) == 1
         ), "image_pe should have size 1 in batch dim (from `get_dense_pe()`)"
-        pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
+        # pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
+        pos_src = image_pe.expand((tokens.shape[0],) + image_pe.size()[1:])
         b, c, h, w = src.shape
 
         # Run the transformer
