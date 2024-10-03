@@ -208,13 +208,13 @@ def calculate_stability_score(
     # Save memory by preventing unnecessary cast to torch.int64
     intersections = (
         (masks > (mask_threshold + threshold_offset))
-        .sum(-1) #, dtype=torch.int16)
-        .sum(-1) #, dtype=torch.int32)
+        .sum(-1, dtype=torch.int16)
+        .sum(-1, dtype=torch.int32)
     )
     unions = (
         (masks > (mask_threshold - threshold_offset))
-        .sum(-1) #, dtype=torch.int16)
-        .sum(-1) #, dtype=torch.int32)
+        .sum(-1, dtype=torch.int16)
+        .sum(-1, dtype=torch.int32)
     )
     # print("masks[-1]: ", masks[-1])
     # import pdb; pdb.set_trace()
