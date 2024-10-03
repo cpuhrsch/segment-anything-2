@@ -247,7 +247,11 @@ class MaskDecoder(nn.Module):
         # print("**** hyper_in[-1].sum(): ", hyper_in[-1].sum())
         # print("**** upscaled_embedding[-1].sum(): ", upscaled_embedding[-1].sum())
         b, c, h, w = upscaled_embedding.shape
-        masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
+        # masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
+        # TODO: Sadly this helps and the compiler doesn't do it automatically.
+        # TODO: Could be a max-autotune step?
+        masks = torch.matmul(upscaled_embedding.view(b, c, h * w).transpose(-1, -2), hyper_in.transpose(-1, -2)).transpose(-1, -2).reshape(b, -1, h, w)
+        # import pdb; pdb.set_trace()
         # print("**** masks[-1].sum(): ", masks[-1].sum())
 
         # Generate mask quality predictions
