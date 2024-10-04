@@ -196,6 +196,7 @@ class MaskDecoder(nn.Module):
         output_tokens = output_tokens.unsqueeze(0).expand(
             sparse_prompt_embeddings.size(0), -1, -1
         )
+        # import pdb; pdb.set_trace()
         tokens = torch.cat((output_tokens, sparse_prompt_embeddings), dim=1)
 
         # Expand per-image data in batch direction to be per-mask
@@ -215,12 +216,19 @@ class MaskDecoder(nn.Module):
         b, c, h, w = src.shape
 
         # Run the transformer
-        hs, src = self.transformer(src, pos_src, tokens)
+        # hs, src = self.transformer(src, pos_src, tokens)
+        # TODO: This trick only works with the encoder isn't passed masks.
+        # TODO: Check strides of src and dense_prompt_embeddings above to decide.
+        hs, src_out = self.transformer(src.narrow(0, 0, 1), pos_src, tokens)
+        # hs, src_out = self.transformer(src.narrow(0, 0, 1), pos_src.narrow(0, 0, 1), tokens)
+        # import pdb; pdb.set_trace()
+
         iou_token_out = hs[:, s, :]
         mask_tokens_out = hs[:, s + 1 : (s + 1 + self.num_mask_tokens), :]
 
         # Upscale mask embeddings and predict masks using the mask tokens
-        src = src.transpose(1, 2).view(b, c, h, w)
+        src = src_out.transpose(1, 2).view(b, c, h, w)
+        # src = src_out.transpose(1, 2).reshape_as(src)
         if not self.use_high_res_features:
             upscaled_embedding = self.output_upscaling(src)
         else:

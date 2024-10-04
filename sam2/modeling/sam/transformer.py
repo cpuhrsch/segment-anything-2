@@ -106,6 +106,9 @@ class TwoWayTransformer(nn.Module):
           torch.Tensor: the processed point_embedding
           torch.Tensor: the processed image_embedding
         """
+        # print("00 image_embedding.size(): ", image_embedding.size())
+        # print("00 image_pe.size(): ", image_pe.size())
+        # print("00 point_embedding.size(): ", point_embedding.size())
         # BxCxHxW -> BxHWxC == B x N_image_tokens x C
         bs, c, h, w = image_embedding.shape
         image_embedding = image_embedding.flatten(2).permute(0, 2, 1)
@@ -115,8 +118,11 @@ class TwoWayTransformer(nn.Module):
         queries = point_embedding
         keys = image_embedding
 
+        # print("00 queries.size(): ", queries.size())
+
         # Apply transformer blocks and final layernorm
         for layer in self.layers:
+            # print("---")
             queries, keys = layer(
                 queries=queries,
                 keys=keys,
@@ -179,8 +185,16 @@ class TwoWayAttentionBlock(nn.Module):
         self.skip_first_layer_pe = skip_first_layer_pe
 
     def forward(
-        self, queries: Tensor, keys: Tensor, query_pe: Tensor, key_pe: Tensor
+        self,
+        queries: Tensor,
+        keys: Tensor,
+        query_pe: Tensor,
+        key_pe: Tensor
     ) -> Tuple[Tensor, Tensor]:
+        # print("10 queries.size(): ", queries.size())
+        # print("10 keys.size(): ", keys.size())
+        # print("10 query_pe.size(): ", query_pe.size())
+        # print("10 key_pe.size(): ", key_pe.size())
         # Self attention block
         if self.skip_first_layer_pe:
             queries = self.self_attn(q=queries, k=queries, v=queries)
@@ -193,21 +207,35 @@ class TwoWayAttentionBlock(nn.Module):
         # Cross attention block, tokens attending to image embedding
         q = queries + query_pe
         k = keys + key_pe
+        # print("11 queries.size(): ", queries.size())
+        # print("11 keys.size(): ", keys.size())
+        # print("11 query_pe.size(): ", query_pe.size())
+        # print("11 key_pe.size(): ", key_pe.size())
         attn_out = self.cross_attn_token_to_image(q=q, k=k, v=keys)
         queries = queries + attn_out
+        # print("110 queries.size(): ", queries.size())
         queries = self.norm2(queries)
+        # print("111 queries.size(): ", queries.size())
 
         # MLP block
         mlp_out = self.mlp(queries)
+        # print("112 queries.size(): ", queries.size())
         queries = queries + mlp_out
+        # print("113 queries.size(): ", queries.size())
         queries = self.norm3(queries)
+        # print("114 queries.size(): ", queries.size())
 
         # Cross attention block, image embedding attending to tokens
         q = queries + query_pe
         k = keys + key_pe
         attn_out = self.cross_attn_image_to_token(q=k, k=q, v=queries)
+        # import pdb; pdb.set_trace()
         keys = keys + attn_out
         keys = self.norm4(keys)
+        # print("12 queries.size(): ", queries.size())
+        # print("12 keys.size(): ", keys.size())
+        # print("12 query_pe.size(): ", query_pe.size())
+        # print("12 key_pe.size(): ", key_pe.size())
 
         return queries, keys
 
@@ -235,7 +263,7 @@ class Attention(nn.Module):
             self.internal_dim % num_heads == 0
         ), "num_heads must divide embedding_dim."
 
-        # print(f"self.internal_dim: {self.internal_dim}, self.kv_in_dim: {self.kv_in_dim}, self.embedding_dim: {self.embedding_dim}")
+        # # print(f"self.internal_dim: {self.internal_dim}, self.kv_in_dim: {self.kv_in_dim}, self.embedding_dim: {self.embedding_dim}")
         if self.embedding_dim == self.kv_in_dim:
             self.qkv_proj_weight = torch.nn.Parameter(torch.empty((3 * self.internal_dim, embedding_dim)))
             self.qkv_proj_bias = torch.nn.Parameter(torch.empty(3 * self.internal_dim))
@@ -291,11 +319,13 @@ class Attention(nn.Module):
         return x.reshape(b, n_tokens, n_heads * c_per_head)  # B x N_tokens x C
 
     def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
-        # print("COUNT")
+        # # print("COUNT")
         # Input projections
 
+
+        # import pdb; pdb.set_trace()
         if self.embedding_dim == self.kv_in_dim:
-            # print("(q is k): ", (q is k), " (k is v): ", (k is v))
+            # # print("(q is k): ", (q is k), " (k is v): ", (k is v))
             if (q is k) and (k is v):
                 q, k, v = F.linear(q, self.qkv_proj_weight, self.qkv_proj_bias).chunk(3, -1)
             else:
@@ -317,8 +347,13 @@ class Attention(nn.Module):
         dropout_p = self.dropout_p if self.training else 0.0
         # Attention
         # import pdb; pdb.set_trace()
-        # print("4380348FLJSDLK", " id(q): ", id(q), " id(k): ", id(k), " id(v): ", id(v))
+        # # print("4380348FLJSDLK", " id(q): ", id(q), " id(k): ", id(k), " id(v): ", id(v))
+        # with torch.backends.cuda.sdp_kernel(enable_cudnn=False):
+        # # print("q.size(): ", q.size(), " q.stride(): ", q.stride(), " q.is_contiguous(): ", q.is_contiguous())
+        # # print("k.size(): ", k.size(), " k.stride(): ", k.stride(), " k.is_contiguous(): ", k.is_contiguous())
+        # # print("v.size(): ", v.size(), " v.stride(): ", v.stride(), " v.is_contiguous(): ", v.is_contiguous())
         out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+        # import pdb; pdb.set_trace()
         # try:
         #     with sdp_kernel_context(dropout_p):
         #         out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
@@ -391,7 +426,7 @@ class RoPEAttention(Attention):
             repeat_freqs_k=self.rope_k_repeat,
         )
 
-        print("JSKDFLJSDLK")
+        # print("JSKDFLJSDLK")
 
         dropout_p = self.dropout_p if self.training else 0.0
         # Attention
